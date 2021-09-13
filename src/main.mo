@@ -10,6 +10,10 @@ import Interface "Metarank";
 // TODO: implement MetarankInterface
 shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInterface {
 
+    // TODO: Create internal asset state (asset index, asset payload, etc.)
+    // TODO: Create internal ledger state (token id, player, rank record)
+    // TODO: Create Rank type (assetIndex, title, etc)
+
     // List of Metascore admins, these are principals that perform admin actions.
     private stable var admins = [owner];
 
