@@ -1,6 +1,14 @@
 import Array "mo:base/Array";
+import Text "mo:base/Text";
 
-shared ({ caller = owner }) actor class MetaRank() {
+import Assets "mo:assets/AssetStorage";
+
+import Interface "Metarank";
+
+
+// The compiler will complain about this whole actor until it implements MetarankInterface
+// TODO: implement MetarankInterface
+shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInterface {
 
     // List of Metascore admins, these are principals that perform admin actions.
     private stable var admins = [owner];
@@ -41,6 +49,28 @@ shared ({ caller = owner }) actor class MetaRank() {
             if (a == p) return true;
         };
         return false;
+    };
+
+    // We should expose previews via HTTP
+    public query func http_request(request : Assets.HttpRequest) : async Assets.HttpResponse {
+            
+            // Stoic uses this to request a preview of a certain token ID
+            // TODO: implement this
+            if (Text.contains(request.url, #text("tokenid"))) {
+                return {
+                    body = [];
+                    headers = [];
+                    status_code = 200;
+                    streaming_strategy = null;
+                };
+            };
+
+            return {
+                body = [];
+                headers = [];
+                status_code = 404;
+                streaming_strategy = null;
+            };
     };
 
 };
