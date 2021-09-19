@@ -90,6 +90,12 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         stableTokenLedger := [];
     };
 
+    let tokensOfUser = HashMap.HashMap<ExtCore.AccountIdentifier, [ExtCore.TokenIndex]>(
+            0,
+            AID.equal,
+            AID.hash,
+        );
+
 
     ////////////////
     /// Admin /////
@@ -202,6 +208,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
                       owner = recipient; 
                     }; 
         tokenledger.put(tokenIndex, token);
+        _indexToken(tokenIndex, recipient, tokensOfUser);
         nextTokenId := nextTokenId + 1;
     };
 
@@ -215,6 +222,25 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
 
 
     
+
+
+    // Convenience method to add a token to our denormalized index maps
+    private func _indexToken (
+        token : ExtCore.TokenIndex,
+        id : ExtCore.AccountIdentifier,
+        map : HashMap.HashMap<ExtCore.AccountIdentifier, [ExtCore.TokenIndex]>
+    ) : () {
+        switch (map.get(id)) {
+            case (null) map.put(id, [token]);
+            case (?tokens) map.put(id, Array.append(tokens, [token]));
+        };
+    };
+
+
+
+
+
+
 
 
 
@@ -259,6 +285,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         };
         return ?result;
     };
+
 
     private func httpErrorResponse () : HttpResponse {
         return    {
