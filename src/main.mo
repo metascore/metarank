@@ -3,6 +3,7 @@ import Text "mo:base/Text";
 import Char "mo:base/Char";
 import Assets "mo:assets/AssetStorage";
 import Blob "mo:base/Blob";
+import Bool "mo:base/Bool";
 
 import Cycles "mo:base/ExperimentalCycles";
 import Debug "mo:base/Debug";
@@ -13,13 +14,14 @@ import Nat32 "mo:base/Nat32";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Time "mo:base/Time";
+import Order "mo:base/Order";
 
 import AID "mo:ext/util/AccountIdentifier";
 import ExtCore "mo:ext/Core";
 import ExtNonFungible "mo:ext/NonFungible";
 import ExtCommon "mo:ext/Common";
 import DLHttp "mo:dl-nft/http";
-
+// import DLStatic "mo:dl-nft/static";
 
 import Interface "Metarank";
 
@@ -57,6 +59,13 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
 
     type AssetIndex = ExtCore.TokenIndex;
 
+    type RankRecord = {
+        rank : Text;
+        title : Text;
+        totalMetaScore : Nat;
+        percentile : Float;
+        numericRank : Nat;
+    };
 
     public type Asset = {
         contentType : Text;
@@ -67,15 +76,20 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         createdAt   : Int;
         owner : AccountIdentifier;
         assetIndex : AssetIndex;
+        rankRecord : ?RankRecord;
     }; 
 
     ////////////
     // State //
     //////////
 
+    stable var metaScoreCanisterPrincipal : Principal = Principal.fromText("rdmx6-jaaaa-aaaaa-aaadq-cai"); 
+    stable var metaScoreCanisterSet : Bool = false;     //Stores if the admin set metaScoreCanisterPrincipal to a canister id. 
 
     stable var nextTokenId : TokenIndex = 0;
-    stable var assetIndex : AssetIndex = 0;
+    stable var nextAssetId : AssetIndex = 0;
+
+    stable var assetsLocked : Bool = false;
 
     stable var stableAssetLedger : [(AssetIndex, Asset)] = [];
     stable var stableTokenLedger : [(TokenIndex, Token)] = [];
@@ -209,6 +223,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         let token = { createdAt = Time.now();
                       assetIndex = 0:Nat32;
                       owner = recipient; 
+                      rankRecord = null;
                     }; 
         tokenledger.put(tokenIndex, token);
         _indexToken(tokenIndex, recipient, tokensOfUser);
@@ -240,6 +255,86 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
     };
 
 
+    ////////////////////
+    ////// Assets /////
+    ///////////////////
+
+    // Only an admin can upload assets
+    public shared({caller}) func uploadAssets (asset : Asset) : async Result.Result<(),Text> {
+        if (not _isAdmin(caller)) {
+            return #err("Only an admin can upload assets.");
+        };
+        if (assetsLocked) {
+            return #err("Assets locked. New assets can't be inserted");
+        };
+
+        let assetIndex = nextAssetId;
+        assetledger.put(assetIndex, asset);
+        nextAssetId := nextAssetId + 1;
+        #ok();
+    };
+
+    public shared({caller}) func lockNewAssetUploads () : async Result.Result<(),Text> {
+        if (not _isAdmin(caller)) {
+            return #err("Only an admin can lock uploads.");
+        };
+        assetsLocked := true;
+        #ok();
+    };
+
+
+    /////////////////////////////////
+    ///// MetaScore Integration /////
+    ////////////////////////////////
+
+    public shared({caller}) func setMetaScoreCanisterId (canisterId : Text) : async Result.Result<(),Text> {
+        if (not _isAdmin(caller)) {
+            return #err("Only an admin can set canister id for metascore canister");            
+        };
+        metaScoreCanisterPrincipal := Principal.fromText(canisterId);
+        metaScoreCanisterSet := true;
+        #ok();
+    };
+
+    // private shared({caller}) func getMetaScores () : async  {
+    //     if (not _isAdmin(caller)) {
+            
+    //     }
+    // };
+
+    type Score = (Principal, Nat);
+    type MetaScoreInterface = actor {
+        getLeaderboard : shared () -> async [Score];
+    };
+
+    public shared({caller}) func mintAllNFTs () : async Result.Result<(),Text> {
+        if (not _isAdmin(caller)) {
+            return #err("Only an admin can mint all the NFTs");
+        };
+
+        if (not metaScoreCanisterSet) {
+            return #err("Please set canister id of metascore canister via setMetaScoreCanisterId method first.");
+        };
+
+        let metaScoreCanister : MetaScoreInterface = actor(Principal.toText(metaScoreCanisterPrincipal));
+        var leaderboard : [Score] = await metaScoreCanister.getLeaderboard();
+        leaderboard := sortScores(leaderboard);
+
+        #ok();
+    };
+
+    private func sortScores(scores : [Score] ) : [Score] {
+        Array.sort<Score>(
+            scores,
+            // Sort from high to low.
+            func (a : Score, b : Score) : Order.Order {
+                let (x, y) = (a.1, b.1);
+                if      (x < y)  { #greater; }
+                else if (x == y) { #equal;   }
+                else             { #less;    };
+            },
+        );
+    };
 
     ////////////////////
     ////// DAB Js /////
@@ -284,15 +379,15 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
             case (?tokenIndexList) {
                 let tokenExtList = Array.map(tokenIndexList, 
                                                 func(tokenIndex : TokenIndex) : tokenExt { (tokenIndex, null, null); } 
-                                            );   
-
+                                            );
                 return #ok(tokenExtList);
             };
             case Null #err(#Other("The user doesn't have any tokens in this collection")); 
         };
     };
 
-    public query func metadata (tokenIdentifier : TokenIdentifier) : async Result.Result<Metadata, CommonError> {
+    //TODO: Need to return player rank record in metadata.  
+   public query func metadata (tokenIdentifier : TokenIdentifier) : async Result.Result<Metadata, CommonError> {
         if (not ExtCore.TokenIdentifier.isPrincipal(tokenIdentifier, Principal.fromActor(canister))) {
             return #err(#InvalidToken(tokenIdentifier));
         };
@@ -328,7 +423,10 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         if (path[0] == "Token") {
             Debug.print("Handle HTTP Token Index: " # path[1]);
             switch ( textToInt(path[1]) ) {
-                case (?tokenIndex) return httpBadgeFromTokenIndex(tokenIndex);
+                case (?tokenIndex) {
+                    Debug.print("Handle HTTP Token Index: " # Nat32.toText(tokenIndex));
+                    return httpBadgeFromTokenIndex(tokenIndex);
+                };
                 case Null return httpErrorResponse();
             }
         }; 
