@@ -17,6 +17,7 @@ import Time "mo:base/Time";
 import AID "mo:ext/util/AccountIdentifier";
 import ExtCore "mo:ext/Core";
 import ExtNonFungible "mo:ext/NonFungible";
+import ExtCommon "mo:ext/Common";
 import DLHttp "mo:dl-nft/http";
 
 
@@ -35,7 +36,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
     ////////////
     // Types //
     //////////
-
+    type Time = Time.Time;
     type AccountIdentifier = ExtCore.AccountIdentifier;
     type SubAccount = ExtCore.SubAccount;
     type User = ExtCore.User;
@@ -49,6 +50,8 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
     type TransferRequest = ExtCore.TransferRequest;
     type TransferResponse = ExtCore.TransferResponse;
     type MintRequest  = ExtNonFungible.MintRequest;
+    type Metadata = ExtCommon.Metadata;
+
     type HttpRequest = DLHttp.Request;
     type HttpResponse = DLHttp.Response;
 
@@ -238,10 +241,66 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
 
 
 
+    ////////////////////
+    ////// DAB Js /////
+    //////////////////
+
+    /*  Interaface expected by DAB Js
+        balance: IDL.Func([BalanceRequest], [BalanceResult], ['query']),
+        details: IDL.Func([TokenIdentifier], [DetailsResult], ['query']),
+        tokens: IDL.Func([AccountIdentifier], [TokensResult], ['query']),
+        tokens_ext: IDL.Func([AccountIdentifier], [TokenExtResult], []),
+        transfer: IDL.Func([TransferRequest], [TransferResult], []),
+        metadata: IDL.Func([TokenIdentifier], [MetadataResult], ['query']),
+    */
+
+    type Listing = {
+        locked : ?Time;
+        seller : Principal;
+        price : Nat64;
+    };
+
+    type DetailsResult = {
+        #ok : (AccountIdentifier, ?Listing);
+        #err : CommonError;
+    };
+
+    // public query func details () : async DetailsResult {
+
+    // };
+
+    public query func tokens (accountIdentifier : AccountIdentifier) : async Result.Result<[TokenIndex], CommonError> {
+        switch(tokensOfUser.get(accountIdentifier)) {
+            case (?tokenIndexList) return #ok(tokenIndexList);
+            case Null #err(#Other("The user doesn't have any tokens in this collection")); 
+        };
+    };
+
+    // Returns all tokens of a user. 
+    // Used by DAB Js
+    type tokenExt = (TokenIndex, ?[Listing], ?[Nat8]);
+    public func tokens_ext (accountIdentifier : AccountIdentifier) : async Result.Result<[tokenExt], CommonError> {
+        switch(tokensOfUser.get(accountIdentifier)) {
+            case (?tokenIndexList) {
+                let tokenExtList = Array.map(tokenIndexList, 
+                                                func(tokenIndex : TokenIndex) : tokenExt { (tokenIndex, null, null); } 
+                                            );   
+
+                return #ok(tokenExtList);
+            };
+            case Null #err(#Other("The user doesn't have any tokens in this collection")); 
+        };
+    };
+
+    // public query func metadata (tokenIdentifier : TokenIdentifier) : async Result.Result<Metadata, CommonError> {
+
+    // };
 
 
 
-
+    ///////////////////////
+    ////// HTTP /////////
+    /////////////////////
 
 
 
@@ -330,7 +389,6 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
                 };
             };
             case Null  httpErrorResponse();
-        }
-    }
-
+        };
+    };
 };
