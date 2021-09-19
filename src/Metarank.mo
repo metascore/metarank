@@ -10,19 +10,19 @@ module {
         // however, I'm not sure how to document them here. See main.mo
 
         // EXT standard token balance request
-        balance : (request : ExtCore.BalanceRequest, canisterPrincipal : Principal) -> async ExtCore.BalanceResponse;
+        balance : shared query (request : ExtCore.BalanceRequest) -> async ExtCore.BalanceResponse;
 
         // EXT standard token bearer request
-        bearer : (token : ExtCore.TokenIdentifier, canisterPrincipal : Principal) -> async Result.Result<ExtCore.AccountIdentifier, ExtCore.CommonError>;
+        bearer : shared query (token : ExtCore.TokenIdentifier) -> async Result.Result<ExtCore.AccountIdentifier, ExtCore.CommonError>;
 
         // EXT standard transfer request. We should throw an error here.
-        transfer : (request : ExtCore.TransferRequest, caller : Principal, canisterPrincipal : Principal) -> async ExtCore.TransferResponse;
+        transfer : shared (request : ExtCore.TransferRequest) -> async ExtCore.TransferResponse;
 
         // Ext standard to retrieve token metadata
-        metadata : (token : ExtCore.TokenIdentifier) -> async Result.Result<ExtMetadata, ExtCore.CommonError>;
+        // metadata : (token : ExtCore.TokenIdentifier) -> async Result.Result<ExtMetadata, ExtCore.CommonError>;
 
         // Ext standard to retrieve token supply. Should always be one.
-        supply : (token : ExtCore.TokenIdentifier) -> async Result.Result<ExtCore.Balance, ExtCore.CommonError>;
+        // supply : (token : ExtCore.TokenIdentifier) -> async Result.Result<ExtCore.Balance, ExtCore.CommonError>;
 
         // --
 

@@ -1,18 +1,99 @@
 import Array "mo:base/Array";
 import Text "mo:base/Text";
-
+import Char "mo:base/Char";
 import Assets "mo:assets/AssetStorage";
+import Blob "mo:base/Blob";
+
+import Cycles "mo:base/ExperimentalCycles";
+import Debug "mo:base/Debug";
+import HashMap "mo:base/HashMap";
+import Iter "mo:base/Iter";
+import Nat "mo:base/Nat";
+import Nat32 "mo:base/Nat32";
+import Principal "mo:base/Principal";
+import Result "mo:base/Result";
+import Time "mo:base/Time";
+
+import AID "mo:ext/util/AccountIdentifier";
+import ExtCore "mo:ext/Core";
+import ExtNonFungible "mo:ext/NonFungible";
+import DLHttp "mo:dl-nft/http";
+
 
 import Interface "Metarank";
 
 
 // The compiler will complain about this whole actor until it implements MetarankInterface
 // TODO: implement MetarankInterface
-shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInterface {
+shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInterface = canister {
 
     // TODO: Create internal asset state (asset index, asset payload, etc.)
     // TODO: Create internal ledger state (token id, player, rank record)
     // TODO: Create Rank type (assetIndex, title, etc)
+
+
+    ////////////
+    // Types //
+    //////////
+
+    type AccountIdentifier = ExtCore.AccountIdentifier;
+    type SubAccount = ExtCore.SubAccount;
+    type User = ExtCore.User;
+    type Balance = ExtCore.Balance;
+    type TokenIdentifier = ExtCore.TokenIdentifier;
+    type TokenIndex  = ExtCore.TokenIndex;
+    type Extension = ExtCore.Extension;
+    type CommonError = ExtCore.CommonError;
+    type BalanceRequest = ExtCore.BalanceRequest;
+    type BalanceResponse = ExtCore.BalanceResponse;
+    type TransferRequest = ExtCore.TransferRequest;
+    type TransferResponse = ExtCore.TransferResponse;
+    type MintRequest  = ExtNonFungible.MintRequest;
+    type HttpRequest = DLHttp.Request;
+    type HttpResponse = DLHttp.Response;
+
+    type AssetIndex = ExtCore.TokenIndex;
+
+
+    public type Asset = {
+        contentType : Text;
+        payload     : [Blob];
+    };
+
+    type Token = {
+        createdAt   : Int;
+        owner : AccountIdentifier;
+        assetIndex : AssetIndex;
+    }; 
+
+    ////////////
+    // State //
+    //////////
+
+
+    stable var nextTokenId : TokenIndex = 0;
+    stable var assetIndex : AssetIndex = 0;
+
+    stable var stableAssetLedger : [(AssetIndex, Asset)] = [];
+    stable var stableTokenLedger : [(TokenIndex, Token)] = [];
+    
+    var tokenledger : HashMap.HashMap<TokenIndex, Token> = HashMap.fromIter(stableTokenLedger.vals(), 0, ExtCore.TokenIndex.equal, ExtCore.TokenIndex.hash);
+    var assetledger : HashMap.HashMap<AssetIndex, Asset> = HashMap.fromIter(stableAssetLedger.vals(), 0, ExtCore.TokenIndex.equal, ExtCore.TokenIndex.hash);
+
+    system func preupgrade() {
+        stableAssetLedger := Iter.toArray(assetledger.entries());
+        stableTokenLedger := Iter.toArray(tokenledger.entries());
+    };
+
+    system func postupgrade() {
+        stableAssetLedger := [];
+        stableTokenLedger := [];
+    };
+
+
+    ////////////////
+    /// Admin /////
+    ///////////////
 
     // List of Metascore admins, these are principals that perform admin actions.
     private stable var admins = [owner];
@@ -55,26 +136,174 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         return false;
     };
 
-    // We should expose previews via HTTP
-    public query func http_request(request : Assets.HttpRequest) : async Assets.HttpResponse {
-            
-            // Stoic uses this to request a preview of a certain token ID
-            // TODO: implement this
-            if (Text.contains(request.url, #text("tokenid"))) {
-                return {
-                    body = [];
-                    headers = [];
-                    status_code = 200;
-                    streaming_strategy = null;
-                };
-            };
 
-            return {
-                body = [];
+
+
+
+
+    /////////////
+    // Things //
+    ///////////
+
+    // Ext core
+
+    let EXTENSIONS : [Extension] = ["@ext/nonfungible"];
+
+    public shared query func extensions () : async [Extension] {
+        EXTENSIONS;
+    };
+
+    public shared query func balance (request : ExtCore.BalanceRequest) : async ExtCore.BalanceResponse {
+        if (not ExtCore.TokenIdentifier.isPrincipal(request.token, Principal.fromActor(canister))) {
+            return #err(#InvalidToken(request.token));
+        };
+        let tokenIndex = ExtCore.TokenIdentifier.getIndex(request.token);
+        let aid = ExtCore.User.toAID(request.user);
+        switch (tokenledger.get(tokenIndex)) {
+            case (?token) {
+                if (AID.equal(aid, token.owner)) return #ok(1);
+                return #ok(0);
+            };
+            case Null #err(#InvalidToken(request.token));
+        };
+    };
+
+    // The NFT Badges are non-transferrable. Any transfer request will be denied. 
+    public shared({ caller }) func transfer (request : TransferRequest) : async TransferResponse {
+        if (request.amount != 1) {
+            return #err(#Other("Only logical transfer amount for an NFT is 1, got" # Nat.toText(request.amount) # "."));
+        };
+        if (not ExtCore.TokenIdentifier.isPrincipal(request.token, Principal.fromActor(canister))) {
+            return #err(#InvalidToken(request.token));
+        };
+        return #err(#Rejected);
+    };
+
+
+
+    // Ext nonfungible
+
+    public shared query func bearer (token : TokenIdentifier) : async Result.Result<AccountIdentifier, CommonError> {
+        if (not ExtCore.TokenIdentifier.isPrincipal(token, Principal.fromActor(canister))) {
+            return #err(#InvalidToken(token));
+        };
+        let tokenIndex = ExtCore.TokenIdentifier.getIndex(token);
+        switch (tokenledger.get(tokenIndex)) {
+            case (?token) #ok(token.owner);
+            case Null #err(#InvalidToken(token));
+        };
+    };
+
+    public shared({ caller }) func mintNFT (request : MintRequest) : async () {
+        let recipient = ExtCore.User.toAID(request.to);
+        let tokenIndex = nextTokenId;
+        let token = { createdAt = Time.now();
+                      assetIndex = 0:Nat32;
+                      owner = recipient; 
+                    }; 
+        tokenledger.put(tokenIndex, token);
+        nextTokenId := nextTokenId + 1;
+    };
+
+
+
+    // Just useful things
+
+    public query func readLedger () : async [(TokenIndex, Token)] {
+        Iter.toArray(tokenledger.entries());
+    };
+
+
+    
+
+
+
+
+
+    // Given a URL of a token, returns the badge image. 
+    // Plug, Stoic uses this to request a preview of a certain token ID
+    // A url is of the form https://<canister id>.ic0.app/?type=thumbnail&tokenid=<tokenIdentifier>
+
+    public query func http_request(request : HttpRequest) : async HttpResponse {
+        Debug.print("Handle HTTP Url: " # request.url);
+            
+        if (Text.contains(request.url, #text("tokenid"))) {
+            // EXT preview
+            let path = Iter.toArray(Text.tokens(request.url, #text("tokenid=")));
+            let tokenIdentifier = path[1];
+            Debug.print("Handle HTTP Token Identifier: " # tokenIdentifier);            
+            return httpBadgeFromTokenIdentifier(path[1]);
+        };
+
+        let path = Iter.toArray(Text.tokens(request.url, #text("/")));
+        if (path[0] == "Token") {
+            Debug.print("Handle HTTP Token Index: " # path[1]);
+            switch ( textToInt(path[1]) ) {
+                case (?tokenIndex) return httpBadgeFromTokenIndex(tokenIndex);
+                case Null return httpErrorResponse();
+            }
+        }; 
+        return httpErrorResponse();
+    };
+
+
+    private func textToInt(text : Text) : ?Nat32 {
+        var result : TokenIndex = 0;
+        for (char in Text.toIter(text)) {
+            if (Char.isDigit(char)) {
+                result := result * 10;
+                result += Char.toNat32(char) - Char.toNat32('0');
+            }
+            else
+                return null;
+        };
+        return ?result;
+    };
+
+    private func httpErrorResponse () : HttpResponse {
+        return    {
+                body = Blob.fromArray([]);
                 headers = [];
                 status_code = 404;
                 streaming_strategy = null;
             };
     };
+
+    private func httpBadgeFromTokenIdentifier(tokenIdentifier : Text) : HttpResponse {
+
+        if (not ExtCore.TokenIdentifier.isPrincipal(tokenIdentifier, Principal.fromActor(canister))) {
+            return httpErrorResponse();
+            // return #err(#InvalidToken(token));
+        };
+
+        let tokenIndex = ExtCore.TokenIdentifier.getIndex(tokenIdentifier);
+        return httpBadgeFromTokenIndex(tokenIndex);
+    };
+
+    private func httpBadgeFromTokenIndex(tokenIndex : TokenIndex) : HttpResponse {
+        
+        let cache = "86400";  // Cache one day
+
+        switch(tokenledger.get(tokenIndex)) {
+            case (?token) {
+                let assetIndex = token.assetIndex;
+                switch(assetledger.get(assetIndex)) {
+                    case (?asset) {
+                        return {
+                            body = asset.payload[0];
+                            headers = [
+                                ("Content-Type", asset.contentType),
+                                ("Cache-Control", "max-age=" # cache),
+                            ];
+                            status_code = 200;
+                            streaming_strategy = null;
+                        };
+                    };
+                    case Null httpErrorResponse();
+                };
+            };
+            case Null  httpErrorResponse();
+        }
+    }
 
 };
