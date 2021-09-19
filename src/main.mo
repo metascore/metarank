@@ -292,9 +292,13 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         };
     };
 
-    // public query func metadata (tokenIdentifier : TokenIdentifier) : async Result.Result<Metadata, CommonError> {
-
-    // };
+    public query func metadata (tokenIdentifier : TokenIdentifier) : async Result.Result<Metadata, CommonError> {
+        if (not ExtCore.TokenIdentifier.isPrincipal(tokenIdentifier, Principal.fromActor(canister))) {
+            return #err(#InvalidToken(tokenIdentifier));
+        };
+        let metadata = #nonfungible({metadata = null});
+        return #ok(metadata);
+    };
 
 
 
