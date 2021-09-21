@@ -10,6 +10,8 @@ import Debug "mo:base/Debug";
 import HashMap "mo:base/HashMap";
 import Iter "mo:base/Iter";
 import Nat "mo:base/Nat";
+import Int "mo:base/Int";
+import Float "mo:base/Float";
 import Nat32 "mo:base/Nat32";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
@@ -51,13 +53,13 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
     type BalanceResponse = ExtCore.BalanceResponse;
     type TransferRequest = ExtCore.TransferRequest;
     type TransferResponse = ExtCore.TransferResponse;
-    type MintRequest  = ExtNonFungible.MintRequest;
     type Metadata = ExtCommon.Metadata;
 
     type HttpRequest = DLHttp.Request;
     type HttpResponse = DLHttp.Response;
 
     type AssetIndex = ExtCore.TokenIndex;
+    
 
     type RankRecord = {
         rank : Text;
@@ -76,8 +78,14 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         createdAt   : Int;
         owner : AccountIdentifier;
         assetIndex : AssetIndex;
-        rankRecord : ?RankRecord;
+        rankRecord : RankRecord;
     }; 
+    
+    type MintRequest  = {
+        to : Principal;
+        assetIndex : AssetIndex;
+        rankRecord : RankRecord;
+    };
 
     ////////////
     // State //
@@ -112,6 +120,17 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
             AID.equal,
             AID.hash,
         );
+
+    let BEST_BADGE_INDEX : AssetIndex = 5;
+    let SECOND_BEST_BADGE_INDEX : AssetIndex = 4;
+    let THIRD_BEST_BADGE_INDEX : AssetIndex = 3;
+    let ELITE_GAMER_BADGE_INDEX : AssetIndex = 2;    //Awarded to gamers who score above 85 percentile
+    let STRONG_GAMER_BADGE_INDEX : AssetIndex = 1;   //Awarded to gamers who score above 50-85 percentile
+    let GAMER_BADGE_INDEX : AssetIndex = 0;          //Awarded to gamers who score 0-50 percentile
+
+    //Maps an asset index to the class that determines if an asset has to be awarded to a user. 
+    // let BADGE_CLASS : [(AssetIndex, BadgeClass)] = [(0, Gamer), (1, Gamer50Percentile), (2, Gamer85Percentile), (3, ThirdRank), (4, SecondRank), (5, FirstRank)];
+    // let BADGE_CLASS : HashMap.HashMap<AssetIndex, BadgeClass> = HashMap.fromIter(BADGE_CLASS.vals(), 0, ExtCore.TokenIndex.equal, ExtCore.TokenIndex.hash);
 
 
     ////////////////
@@ -217,14 +236,18 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         };
     };
 
-    public shared({ caller }) func mintNFT (request : MintRequest) : async () {
-        let recipient = ExtCore.User.toAID(request.to);
+    //This method is used internally, and the input doesn't follow the format of EXT standard. 
+    //@auth : Admin
+    private func mintNFT (request : MintRequest) {
+        
+        let recipient = AID.fromPrincipal(request.to, null);  //The subaccount is null. 
+        // let recipient = ExtCore.User.toAID(request.to);
         let tokenIndex = nextTokenId;
         let token = { createdAt = Time.now();
-                      assetIndex = 0:Nat32;
-                      owner = recipient; 
-                      rankRecord = null;
-                    }; 
+                      assetIndex = request.assetIndex;
+                      owner = recipient;
+                      rankRecord = request.rankRecord;
+                    };
         tokenledger.put(tokenIndex, token);
         _indexToken(tokenIndex, recipient, tokensOfUser);
         nextTokenId := nextTokenId + 1;
@@ -287,6 +310,8 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
     ///// MetaScore Integration /////
     ////////////////////////////////
 
+    //Admin can set the canister principal of metascore canister via this method. 
+    //@auth: Admin
     public shared({caller}) func setMetaScoreCanisterId (canisterId : Text) : async Result.Result<(),Text> {
         if (not _isAdmin(caller)) {
             return #err("Only an admin can set canister id for metascore canister");            
@@ -296,17 +321,14 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         #ok();
     };
 
-    // private shared({caller}) func getMetaScores () : async  {
-    //     if (not _isAdmin(caller)) {
-            
-    //     }
-    // };
-
     type Score = (Principal, Nat);
     type MetaScoreInterface = actor {
         getLeaderboard : shared () -> async [Score];
     };
 
+    //Downloads the leaderboad from metascore canister. Sorts the leaderboard. Then awards the NFT badges to each user. 
+    //@auth: Admin
+    //Requirements: Should be called by admin, already set metascore canister id, uploaded the assets, and locked all the assets. 
     public shared({caller}) func mintAllNFTs () : async Result.Result<(),Text> {
         if (not _isAdmin(caller)) {
             return #err("Only an admin can mint all the NFTs");
@@ -316,13 +338,113 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
             return #err("Please set canister id of metascore canister via setMetaScoreCanisterId method first.");
         };
 
+        if (not assetsLocked) {
+            return #err("Please lock all the assets before minting NFTs");
+        };
+
         let metaScoreCanister : MetaScoreInterface = actor(Principal.toText(metaScoreCanisterPrincipal));
         var leaderboard : [Score] = await metaScoreCanister.getLeaderboard();
         leaderboard := sortScores(leaderboard);
+        
+        let totalUsers : Float = Float.fromInt(leaderboard.size());
+
+
+        //Asset with assetindex 5 is "Best Player" Badge
+        if (totalUsers >= 1) {
+            mintNFT({to = leaderboard[0].0;
+                 assetIndex = BEST_BADGE_INDEX;
+                 rankRecord = {
+                        rank = "Best Gamer";
+                        title = "Best Hackathon Gamer";
+                        totalMetaScore = leaderboard[0].1;
+                        percentile = 1.0/totalUsers; 
+                        numericRank = 1;
+                    };
+                });
+        };
+
+        //Asset with assetindex 4 is "2nd Best Player" Badge
+        if (totalUsers >=2) {
+            mintNFT({to = leaderboard[1].0;
+                 assetIndex = SECOND_BEST_BADGE_INDEX;
+                 rankRecord = {
+                        rank = "Second Best Gamer";
+                        title = "Second Best Hackathon Gamer";
+                        totalMetaScore = leaderboard[1].1;
+                        percentile = 2.0/totalUsers; 
+                        numericRank = 2;
+                    };
+                });
+        };
+
+        //Asset with assetindex 3 is "3rd Best Player" Badge
+        if (totalUsers >= 3) {
+            mintNFT({to = leaderboard[2].0;
+                 assetIndex = THIRD_BEST_BADGE_INDEX;
+                 rankRecord = {
+                        rank = "Third Best Gamer";
+                        title = "Third Best Hackathon Gamer";
+                        totalMetaScore = leaderboard[2].1;
+                        percentile = 3.0/totalUsers; 
+                        numericRank = 3;
+                    };
+                });
+        };
+
+        // //Asset with assetindex 2 is awarded to all the players with above 85 percentile
+        var thresholdIndex = Int.abs(Float.toInt(0.15 * totalUsers)); 
+        let threshold85Score = leaderboard[thresholdIndex].1;
+        var index : Nat = 3; 
+        while ((index < Float.toInt(totalUsers)) and (leaderboard[index].1 >= threshold85Score)) {
+            mintNFT({to = leaderboard[index].0;
+                 assetIndex = ELITE_GAMER_BADGE_INDEX;
+                 rankRecord = {
+                        rank = "Elite Gamer";
+                        title = "Elite Hackathon Gamer";
+                        totalMetaScore = leaderboard[index].1;
+                        percentile = Float.fromInt(index+1)/totalUsers; 
+                        numericRank = index+1;
+                    };
+                });
+            index := index + 1;
+        };
+        
+        // //Asset with assetindex 1 is awarded to all the players with 50-85 percentile
+        thresholdIndex := Int.abs(Float.toInt(0.50 * totalUsers)); 
+        let threshold50Score = leaderboard[thresholdIndex].1;
+        while ((index < Float.toInt(totalUsers)) and (leaderboard[index].1 >= threshold50Score)) {
+            mintNFT({to = leaderboard[index].0;
+                 assetIndex = STRONG_GAMER_BADGE_INDEX;
+                 rankRecord = {
+                        rank = "Strong Gamer";
+                        title = "Strong Hackathon Gamer";
+                        totalMetaScore = leaderboard[index].1;
+                        percentile = Float.fromInt(index+1)/totalUsers; 
+                        numericRank = index+1;
+                    };
+                });
+            index := index + 1;
+        };
+
+        // //Asset with assetindex 0 is awarded to all the players with 0-50 percentile
+        while (index < Float.toInt(totalUsers)) {
+            mintNFT({to = leaderboard[index].0;
+                 assetIndex = GAMER_BADGE_INDEX;
+                 rankRecord = {
+                        rank = "Gamer";
+                        title = "Hackathon Gamer";
+                        totalMetaScore = leaderboard[index].1;
+                        percentile = Float.fromInt(index+1)/totalUsers; 
+                        numericRank = index+1;
+                    };
+                });
+            index := index + 1;
+        };
 
         #ok();
     };
 
+    //Given the list of (principal, totalmetascore) of all users, sorts the list in descending order based on totalmetascore. 
     private func sortScores(scores : [Score] ) : [Score] {
         Array.sort<Score>(
             scores,
