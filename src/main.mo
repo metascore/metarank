@@ -1,18 +1,100 @@
+import AccountIdentifier "mo:principal/AccountIdentifier";
 import Array "mo:base/Array";
+import Blob "mo:base/Blob";
+import Bool "mo:base/Bool";
+import Char "mo:base/Char";
+import Hash "mo:base/Hash";
+import HashMap "mo:base/HashMap";
+import Iter "mo:base/Iter";
+import Principal "mo:base/Principal";
 import Text "mo:base/Text";
 
-import Assets "mo:assets/AssetStorage";
+import ExtCore "mo:ext/Core";
+import ExtNonFungible "mo:ext/NonFungible";
+import ExtCommon "mo:ext/Common";
 
 import Interface "Metarank";
 
 
 // The compiler will complain about this whole actor until it implements MetarankInterface
 // TODO: implement MetarankInterface
-shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInterface {
+shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInterface = this {
 
-    // TODO: Create internal asset state (asset index, asset payload, etc.)
-    // TODO: Create internal ledger state (token id, player, rank record)
-    // TODO: Create Rank type (assetIndex, title, etc)
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | Asset State                                                           |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
+
+    public type Asset = {
+        contentType : Text;
+        payload     : [Blob];
+    };
+
+    private stable var stableAssetLedger : [(ExtCore.TokenIndex, Asset)] = [];
+    private var assetLedger = HashMap.fromIter<ExtCore.TokenIndex, Asset>(
+        stableAssetLedger.vals(), 0, ExtCore.TokenIndex.equal, ExtCore.TokenIndex.hash,
+    );
+
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | Token State                                                           |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
+
+    let BEST_BADGE_INDEX         : ExtCore.TokenIndex = 5; // Top 1
+    let SECOND_BEST_BADGE_INDEX  : ExtCore.TokenIndex = 4; // Top 2
+    let THIRD_BEST_BADGE_INDEX   : ExtCore.TokenIndex = 3; // Top 3
+    let ELITE_GAMER_BADGE_INDEX  : ExtCore.TokenIndex = 2; // Awarded to gamers who score above 85 percentile
+    let STRONG_GAMER_BADGE_INDEX : ExtCore.TokenIndex = 1; // Awarded to gamers who score above 50-85 percentile
+    let GAMER_BADGE_INDEX        : ExtCore.TokenIndex = 0; // Awarded to gamers who score 0-50 percentile
+
+    type Token = {
+        createdAt  : Int;
+        owner      : AccountIdentifier.AccountIdentifier;
+        assetIndex : ExtCore.TokenIndex;
+        rankRecord : RankRecord;
+    };
+
+    type RankRecord = {
+        rank : Text;
+        title : Text;
+        totalMetaScore : Nat;
+        percentile : Float;
+        numericRank : Nat;
+    };
+
+    stable var nextTokenId : ExtCore.TokenIndex = 0;
+    private stable var stableTokenLedger : [(ExtCore.TokenIndex, Token)] = [];
+    private var tokenLedger = HashMap.fromIter<ExtCore.TokenIndex, Token>(
+        stableTokenLedger.vals(), 0, ExtCore.TokenIndex.equal, ExtCore.TokenIndex.hash,
+    );
+
+    private let tokensOfUser = HashMap.HashMap<
+        AccountIdentifier.AccountIdentifier, 
+        [ExtCore.TokenIndex]
+    >(0, AccountIdentifier.equal, AccountIdentifier.hash);
+    for ((tokenId, token) in tokenLedger.entries()) {
+        let tokens = switch (tokensOfUser.get(token.owner)) {
+            case (null) { []; };
+            case (? tk) { tk; };
+        };
+        tokensOfUser.put(token.owner, Array.append(tokens, [tokenId]));
+    };
+
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | Upgrades                                                              |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
+
+    system func preupgrade() {
+        stableAssetLedger := Iter.toArray(assetLedger.entries());
+        stableTokenLedger := Iter.toArray(tokenLedger.entries());
+    };
+
+    system func postupgrade() {
+        stableAssetLedger := [];
+        stableTokenLedger := [];
+    };
+
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | Admin zone. 🚫                                                        |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
 
     // List of Metascore admins, these are principals that perform admin actions.
     private stable var admins = [owner];
@@ -55,26 +137,96 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.MetarankInt
         return false;
     };
 
-    // We should expose previews via HTTP
-    public query func http_request(request : Assets.HttpRequest) : async Assets.HttpResponse {
-            
-            // Stoic uses this to request a preview of a certain token ID
-            // TODO: implement this
-            if (Text.contains(request.url, #text("tokenid"))) {
-                return {
-                    body = [];
-                    headers = [];
-                    status_code = 200;
-                    streaming_strategy = null;
-                };
-            };
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | @ext:core                                                             |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
 
-            return {
-                body = [];
-                headers = [];
-                status_code = 404;
-                streaming_strategy = null;
+    public shared query func balance (request : ExtCore.BalanceRequest) : async ExtCore.BalanceResponse {
+        if (not Principal.equal(request.token.canisterId, Principal.fromActor(this))) {
+            return #err(#InvalidToken(request.token));
+        };
+
+        let accountId  = ExtCore.User.toAccountIdentifier(request.user);
+        switch (tokenLedger.get(request.token.index)) {
+            case (null) {
+                #err(#InvalidToken(request.token));
             };
+            case (? token) {
+                if (AccountIdentifier.equal(accountId, token.owner)) return #ok(1);
+                #ok(0);
+            };
+        };
     };
 
+    public query func extensions() : async [ExtCore.Extension] {
+        ["@ext/common", "@ext/nonfungible"];
+    };
+
+    public shared({ caller }) func transfer (
+        request : ExtCore.TransferRequest,
+    ) : async ExtCore.TransferResponse {
+        #err(#Rejected);
+    };
+
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | @ext:common                                                           |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
+
+    public query func metadata(
+        tokenId : ExtCore.TokenIdentifier,
+    ) : async ExtCommon.MetadataResponse {
+        if (not Principal.equal(tokenId.canisterId, Principal.fromActor(this))) {
+            return #err(#InvalidToken(tokenId));
+        };
+
+        #ok(#nonfungible({metadata = null}));
+    };
+
+    public query func supply(
+        tokenId : ExtCore.TokenIdentifier,
+    ) : async ExtCommon.SupplyResponse {
+        if (not Principal.equal(tokenId.canisterId, Principal.fromActor(this))) {
+            return #err(#InvalidToken(tokenId));
+        };
+
+        switch (tokenLedger.get(tokenId.index)) {
+            case (null) { #ok(0); };
+            case (? _)  { #ok(1); };
+        };
+    };
+
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | @ext:nonfungible                                                      |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
+
+    public query func bearer(
+        tokenId : ExtCore.TokenIdentifier,
+    ) : async ExtNonFungible.BearerResponse {
+        if (not Principal.equal(tokenId.canisterId, Principal.fromActor(this))) {
+            return #err(#InvalidToken(tokenId));
+        };
+
+        switch (tokenLedger.get(tokenId.index)) {
+            case (? token) { #ok(token.owner); };
+            case (null)    { #err(#InvalidToken(tokenId)); };
+        };
+    };
+
+    public shared func mintNFT (
+        request : ExtNonFungible.MintRequest,
+    ) : async () {
+        assert(false);
+    };
+
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | 🎨 Assets                                                             |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
+
+    public shared({caller}) func uploadAsset(
+        index : ExtCore.TokenIndex,
+        asset : Asset,
+    ) : async () {
+        assert(_isAdmin(caller));
+        assetLedger.put(index, asset);
+    };
 };
