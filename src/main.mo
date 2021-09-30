@@ -17,15 +17,6 @@ import Interface "mo:ext/Interface";
 shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungibleToken = this {
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
-    // | Allowances                                                            |
-    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
-
-    private stable var stableAllowances : [(Ext.TokenIndex, Principal)] = [];
-    private var allowances = HashMap.fromIter<Ext.TokenIndex, Principal>(
-        stableAllowances.vals(), 0, Ext.TokenIndex.equal, Ext.TokenIndex.hash,
-    );
-
-    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
     // | Asset State                                                           |
     // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
 
@@ -99,13 +90,11 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
 
     system func preupgrade() {
-        stableAllowances  := Iter.toArray(allowances.entries());
         stableAssetLedger := Iter.toArray(assetLedger.entries());
         stableTokenLedger := Iter.toArray(tokenLedger.entries());
     };
 
     system func postupgrade() {
-        stableAllowances  := [];
         stableAssetLedger := [];
         stableTokenLedger := [];
     };
@@ -181,7 +170,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         ["@ext/common", "@ext/nonfungible"];
     };
 
-    public shared({ caller }) func transfer (
+    public shared({ caller }) func transfer(
         request : Ext.Core.TransferRequest,
     ) : async Ext.Core.TransferResponse {
         #err(#Rejected);
@@ -247,48 +236,13 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     public query func allowance(
         request : Ext.Allowance.Request,
     ) : async Ext.Allowance.Response {
-        let index = switch (checkToken(request.token)) {
-            case (null) { return #err(#InvalidToken(request.token)); };
-            case (? i)  { i; };
-        };
-
-        let owner = Ext.User.toAccountIdentifier(request.owner);
-        switch (tokenLedger.get(index)) {
-            case (null) { return #err(#InvalidToken(request.token)); };
-            case (? token) {
-                if (not Ext.AccountIdentifier.equal(token.owner, owner)) {
-                    return #err(#Other("invalid owner"));
-                };
-                switch (allowances.get(index)) {
-                    case (null) { #ok(0); };
-                    case (? spender) {
-                        if (not Principal.equal(request.spender, spender)) {
-                            #ok(0)
-                        } else {
-                            #ok(1);
-                        };
-                    };
-                };
-            };
-        };
+        #err(#Other("not transferable"));
     };
 
     public shared({caller}) func approve(
         request : Ext.Allowance.ApproveRequest,
     ) : async () {
-        let index = switch (checkToken(request.token)) {
-            case (null) { return; };
-            case (? i)  { i;      };
-        };
-
-        let owner = Ext.AccountIdentifier.fromPrincipal(caller, request.subaccount);
-        switch (tokenLedger.get(index)) {
-            case (null) {};
-            case (? token) {
-                if (not Ext.AccountIdentifier.equal(token.owner, owner)) return;
-                allowances.put(index, request.spender);
-            };
-        };
+        return;
     };
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
