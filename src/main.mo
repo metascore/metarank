@@ -29,6 +29,8 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
 
     private stable var assets : [var Asset] = [var];
 
+    private var uploadBuffer : [Blob] = [];
+
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
     // | Token State                                                           |
     // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
@@ -296,12 +298,37 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     // | 🎨 Assets                                                             |
     // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
 
+    // Upload an asset in one shot.
+    // @auth: admin
     public shared({caller}) func uploadAsset(
         index : Nat,
         asset : Asset,
     ) : async () {
         assert(_isAdmin(caller));
         assets[index] := asset;
+    };
+
+    // Upload some bytes into the buffer. For larger assets.
+    // @auth: admin
+    public shared({caller}) func uploadAssetBuffer(
+        bytes : [Blob]
+    ) : async () {
+        assert(_isAdmin(caller));
+        uploadBuffer := Array.append(uploadBuffer, bytes);
+    };
+
+    // Finalize the upload buffer into an asset.
+    // @auth: admin
+    public shared({caller}) func writeAssetBuffer(
+        index       : Nat,
+        contentType : Text
+    ) : async () {
+        assert(_isAdmin(caller));
+        assets[index] := {
+            contentType = contentType;
+            payload = uploadBuffer;
+        };
+        uploadBuffer := [];
     };
 
     private func getTokenAsset(tokenIndex : Ext.TokenIndex) : Result.Result<Asset, {#token; #asset}> {
