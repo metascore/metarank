@@ -72,13 +72,18 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         [Ext.TokenIndex]
     >(0, Ext.AccountIdentifier.equal, Ext.AccountIdentifier.hash);
 
-    for ((tokenId, token) in tokenLedger.entries()) {
+    private func putUserToken(
+        tokenId : Ext.TokenIndex,
+        token   : Token,
+    ) : () {
         let tokens = switch (tokensOfUser.get(token.owner)) {
             case (null) { []; };
             case (? tk) { tk; };
         };
         tokensOfUser.put(token.owner, Array.append(tokens, [tokenId]));
     };
+
+    for ((tokenId, token) in tokenLedger.entries()) putUserToken(tokenId, token);
 
     // Checks whether the given token is valid.
     private func checkToken(tokenId : Ext.TokenIdentifier) : ?Ext.TokenIndex {
@@ -165,11 +170,13 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         request : MintRequest,
     ) : async () {
         assert (_isAdmin(caller));
-        tokenLedger.put(nextTokenId, {
+        let token = {
             createdAt = Time.now();
             owner = Ext.User.toAccountIdentifier(request.to);
             rankRecord = request.record;
-        });
+        };
+        tokenLedger.put(nextTokenId, token);
+        putUserToken(nextTokenId, token);
         nextTokenId += 1;
     };
 
@@ -272,6 +279,17 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         request : Ext.Allowance.ApproveRequest,
     ) : async () {
         return;
+    };
+
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | Non-standard EXT                                                       |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
+
+    public shared func userToken(user : Ext.User) : async ?Token {
+        switch (tokensOfUser.get(Ext.User.toAccountIdentifier(user))) {
+            case (?ids) tokenLedger.get(ids[0]);
+            case (_) null;
+        }
     };
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
