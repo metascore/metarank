@@ -331,6 +331,13 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         uploadBuffer := [];
     };
 
+    // Empty the upload buffer.
+    // @auth: admin
+    public shared({caller}) func emptyAssetBuffer() : async () {
+        assert(_isAdmin(caller));
+        uploadBuffer := [];
+    };
+
     private func getTokenAsset(tokenIndex : Ext.TokenIndex) : Result.Result<Asset, {#token; #asset}> {
         switch(tokenLedger.get(tokenIndex)) {
             case (?token) #ok(getRankAsset(token.rankRecord));

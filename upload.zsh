@@ -12,7 +12,7 @@ for file in ./art/*; do
         chunkSize=${#chunk[@]}
         echo "Uploading chunk, size: $chunkSize"
         dfx canister call metarank uploadAssetBuffer "( vec {\
-            vec { $(echo ${(j:;:)chunk}) };\
+            vec { $(for byte in $(echo $chunk | sed -E "s/[0-9]+//"); echo "$byte;") };\
         })"
         i=$(($i+$threshold))
     done
