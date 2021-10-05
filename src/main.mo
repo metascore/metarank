@@ -12,8 +12,6 @@ import Ext "mo:ext/Ext";
 import Interface "mo:ext/Interface";
 
 
-// The compiler will complain about this whole actor until it implements MetarankInterface
-// TODO: implement MetarankInterface
 shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungibleToken = this {
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
@@ -25,10 +23,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         payload     : [Blob];
     };
 
-    private stable var stableAssetLedger : [(Ext.TokenIndex, Asset)] = [];
-    private var assetLedger = HashMap.fromIter<Ext.TokenIndex, Asset>(
-        stableAssetLedger.vals(), 0, Ext.TokenIndex.equal, Ext.TokenIndex.hash,
-    );
+    private stable var assets : [var Asset] = [var];
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
     // | Token State                                                           |
@@ -90,12 +85,10 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
 
     system func preupgrade() {
-        stableAssetLedger := Iter.toArray(assetLedger.entries());
         stableTokenLedger := Iter.toArray(tokenLedger.entries());
     };
 
     system func postupgrade() {
-        stableAssetLedger := [];
         stableTokenLedger := [];
     };
 
@@ -250,10 +243,10 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
 
     public shared({caller}) func uploadAsset(
-        index : Ext.TokenIndex,
+        index : Nat,
         asset : Asset,
     ) : async () {
         assert(_isAdmin(caller));
-        assetLedger.put(index, asset);
+        assets[index] := asset;
     };
 };
