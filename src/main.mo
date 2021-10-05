@@ -8,6 +8,7 @@ import Iter "mo:base/Iter";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
+import Time "mo:base/Time";
 
 import Ext "mo:ext/Ext";
 import Interface "mo:ext/Interface";
@@ -54,7 +55,13 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         title   : Text;
     };
 
-    stable var nextTokenId : Ext.TokenIndex = 0;
+    type MintRequest = {
+        to      : Ext.User;
+        record  : RankRecord;
+        metadata: ?Blob;
+    };
+
+    private stable var nextTokenId : Ext.TokenIndex = 0;
     private stable var stableTokenLedger : [(Ext.TokenIndex, Token)] = [];
     private var tokenLedger = HashMap.fromIter<Ext.TokenIndex, Token>(
         stableTokenLedger.vals(), 0, Ext.TokenIndex.equal, Ext.TokenIndex.hash,
@@ -139,6 +146,31 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
             if (a == p) return true;
         };
         return false;
+    };
+
+    // We use this to mint badges by hand after the tournament.
+    // @auth: admin
+    public shared({caller}) func batchMint(
+        requests : [MintRequest]
+    ) : async () {
+        assert (_isAdmin(caller));
+        for (r in Iter.fromArray(requests)) {
+            await mint(r);
+        };
+    };
+
+    // Allows admins to mint NFTs.
+    // @auth: admin
+    public shared({caller}) func mint (
+        request : MintRequest,
+    ) : async () {
+        assert (_isAdmin(caller));
+        tokenLedger.put(nextTokenId, {
+            createdAt = Time.now();
+            owner = Ext.User.toAccountIdentifier(request.to);
+            rankRecord = request.record;
+        });
+        nextTokenId += 1;
     };
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
