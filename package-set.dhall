@@ -21,6 +21,11 @@ let additions = [
   , repo = "https://github.com/aviate-labs/encoding.mo"
   , version = "v0.2.1"
   , dependencies = ["base"]
+  },
+  { name = "assets"
+  , repo = "https://github.com/aviate-labs/asset-storage.mo"
+  , version = "main"
+  , dependencies = ["base"]
   }
 ] : List Package
 

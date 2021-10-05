@@ -6,10 +6,13 @@ import Hash "mo:base/Hash";
 import HashMap "mo:base/HashMap";
 import Iter "mo:base/Iter";
 import Principal "mo:base/Principal";
+import Result "mo:base/Result";
 import Text "mo:base/Text";
 
 import Ext "mo:ext/Ext";
 import Interface "mo:ext/Interface";
+
+import Assets "mo:assets/AssetStorage";
 
 
 shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungibleToken = this {
@@ -39,16 +42,16 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     type Token = {
         createdAt  : Int;
         owner      : Ext.AccountIdentifier;
-        assetIndex : Ext.TokenIndex;
         rankRecord : RankRecord;
     };
 
     type RankRecord = {
-        rank : Text;
-        title : Text;
-        totalMetaScore : Nat;
-        percentile : Float;
-        numericRank : Nat;
+        rank    : Nat; // Gamer = 0, Strong Gamer = 1, etc.
+        number  : Nat; // Player's index on the leaderboard
+        score   : Nat; // Final metascore
+        pctile  : Float;
+        name    : Text;
+        title   : Text;
     };
 
     stable var nextTokenId : Ext.TokenIndex = 0;
@@ -61,6 +64,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         Ext.AccountIdentifier, 
         [Ext.TokenIndex]
     >(0, Ext.AccountIdentifier.equal, Ext.AccountIdentifier.hash);
+
     for ((tokenId, token) in tokenLedger.entries()) {
         let tokens = switch (tokensOfUser.get(token.owner)) {
             case (null) { []; };
@@ -249,4 +253,83 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         assert(_isAdmin(caller));
         assets[index] := asset;
     };
+
+    private func getTokenAsset(tokenIndex : Ext.TokenIndex) : Result.Result<Asset, {#token; #asset}> {
+        switch(tokenLedger.get(tokenIndex)) {
+            case (?token) #ok(getRankAsset(token.rankRecord));
+            case null #err(#token);
+        };
+    };
+
+    private func getRankAsset(record : RankRecord) : Asset {
+        assets[record.rank];
+    };
+
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | HTTP                                                                   |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
+
+    public query func http_request(request : Assets.HttpRequest) : async Assets.HttpResponse {
+        // Token preview
+        if (Text.contains(request.url, #text("tokenid"))) {
+            return preview(request);
+        };
+
+        // 404
+        return http_404(null);
+    };
+
+    private func preview(request : Assets.HttpRequest) : Assets.HttpResponse {
+        let tokenId = Iter.toArray(Text.tokens(request.url, #text("tokenid=")))[1];
+        switch (Ext.TokenIdentifier.decode(tokenId)) {
+            case (#err(err)) http_400(?"Invalid token ID.");
+            case (#ok(_, tokenIndex)) {
+                switch (getTokenAsset(tokenIndex)) {
+                    case (#ok(asset)) ({
+                        body = Blob.toArray(asset.payload[0]);
+                        headers = [
+                            ("Content-Type", asset.contentType),
+                            ("Cache-Control", "max-age=31536000"), // Cache one year
+                        ];
+                        status_code = 200;
+                        streaming_strategy = null;
+                    });
+                    case (#err(_)) http_404(null);
+                };
+            };
+        }          
+    };
+
+    private func http_404(msg : ?Text) : Assets.HttpResponse {
+        {
+            body = Blob.toArray(Text.encodeUtf8(
+                switch (msg) {
+                    case (?msg) msg;
+                    case null "Not found.";
+                }
+            ));
+            headers = [
+                ("Content-Type", "text/plain"),
+            ];
+            status_code = 404;
+            streaming_strategy = null;
+        };
+    };
+
+    private func http_400(msg : ?Text) : Assets.HttpResponse {
+        {
+            body = Blob.toArray(Text.encodeUtf8(
+                switch (msg) {
+                    case (?msg) msg;
+                    case null "Bad request.";
+                }
+            ));
+            headers = [
+                ("Content-Type", "text/plain"),
+            ];
+            status_code = 400;
+            streaming_strategy = null;
+        };
+    };
+
 };
