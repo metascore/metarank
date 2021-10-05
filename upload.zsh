@@ -3,7 +3,6 @@
 threshold=100000
 
 for file in ./art/*; do
-    contentType="image/webp"
     i=0
     bytes=$(od -v -tuC $file | sed -E "s/[0-9]+//")
     byteSize=${#bytes[@]}
@@ -17,4 +16,6 @@ for file in ./art/*; do
         })"
         i=$(($i+$threshold))
     done
+    index=$(echo $file | sed -E "s/(\.\/art\/)([0-9]+)\.(webp)/\2/");\
+    dfx canister call metarank writeAssetBuffer "($index, \"image/png\")"
 done
