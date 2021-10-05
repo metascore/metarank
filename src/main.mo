@@ -4,7 +4,9 @@ import Bool "mo:base/Bool";
 import Char "mo:base/Char";
 import Hash "mo:base/Hash";
 import HashMap "mo:base/HashMap";
+import Int "mo:base/Int";
 import Iter "mo:base/Iter";
+import Nat "mo:base/Nat";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
@@ -15,6 +17,7 @@ import Interface "mo:ext/Interface";
 
 import Assets "mo:assets/AssetStorage";
 
+import Debug "mo:base/Debug";
 
 shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungibleToken = this {
 
@@ -27,7 +30,8 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         payload     : [Blob];
     };
 
-    private stable var assets : [var Asset] = [var];
+    private stable let assets : [var ?Asset] = Array.init<?Asset>(6, null);
+    private stable let assetPreviews : [var ?Asset] = Array.init<?Asset>(6, null);
 
     private var uploadBuffer : [Blob] = [];
 
@@ -305,7 +309,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         asset : Asset,
     ) : async () {
         assert(_isAdmin(caller));
-        assets[index] := asset;
+        assets[index] := ?asset;
     };
 
     // Upload some bytes into the buffer. For larger assets.
@@ -324,7 +328,21 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         contentType : Text
     ) : async () {
         assert(_isAdmin(caller));
-        assets[index] := {
+        assets[index] := ?{
+            contentType = contentType;
+            payload = uploadBuffer;
+        };
+        uploadBuffer := [];
+    };
+
+    // Finalize the upload buffer into an asset preview.
+    // @auth: admin
+    public shared({caller}) func writeAssetBufferToPreview(
+        index       : Nat,
+        contentType : Text
+    ) : async () {
+        assert(_isAdmin(caller));
+        assetPreviews[index] := ?{
             contentType = contentType;
             payload = uploadBuffer;
         };
@@ -340,13 +358,24 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
 
     private func getTokenAsset(tokenIndex : Ext.TokenIndex) : Result.Result<Asset, {#token; #asset}> {
         switch(tokenLedger.get(tokenIndex)) {
-            case (?token) #ok(getRankAsset(token.rankRecord));
+            case (?token) {
+                switch (getRankAsset(token.rankRecord)) {
+                    case (?asset) #ok(asset);
+                    case null #err(#asset);
+                };
+            };
             case null #err(#token);
         };
     };
 
-    private func getRankAsset(record : RankRecord) : Asset {
+    private func getRankAsset(record : RankRecord) : ?Asset {
         assets[record.rank];
+    };
+
+    private func flattenPayload (payload : [Blob]) : [Nat8] {
+        Array.foldLeft<Blob, [Nat8]>(payload, [], func (a : [Nat8], b : Blob) {
+            Array.append(a, Blob.toArray(b));
+        })
     };
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
@@ -356,21 +385,26 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     public query func http_request(request : Assets.HttpRequest) : async Assets.HttpResponse {
         // Token preview
         if (Text.contains(request.url, #text("tokenid"))) {
-            return preview(request);
+            return http_token_preview(request);
+        };
+
+        // Badge preview
+        if (Text.contains(request.url, #text("badge_preview"))) {
+            return http_badge_preview(request);
         };
 
         // 404
         return http_404(null);
     };
 
-    private func preview(request : Assets.HttpRequest) : Assets.HttpResponse {
+    private func http_token_preview(request : Assets.HttpRequest) : Assets.HttpResponse {
         let tokenId = Iter.toArray(Text.tokens(request.url, #text("tokenid=")))[1];
         switch (Ext.TokenIdentifier.decode(tokenId)) {
             case (#err(err)) http_400(?"Invalid token ID.");
             case (#ok(_, tokenIndex)) {
                 switch (getTokenAsset(tokenIndex)) {
                     case (#ok(asset)) ({
-                        body = Blob.toArray(asset.payload[0]);
+                        body = flattenPayload(asset.payload);
                         headers = [
                             ("Content-Type", asset.contentType),
                             ("Cache-Control", "max-age=31536000"), // Cache one year
@@ -382,6 +416,28 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
                 };
             };
         }          
+    };
+
+    private func http_badge_preview(request : Assets.HttpRequest) : Assets.HttpResponse {
+        let pathParam = Iter.toArray(Text.tokens(request.url, #text("badge_preview=")))[1];
+        for (i in Iter.range(0, 5)) {
+            if (Int.toText(i) == pathParam) {
+                let badgeIndex = i;
+                switch (assets[badgeIndex]) {
+                    case (?asset) return {
+                        body = flattenPayload(asset.payload);
+                        headers = [
+                            ("Content-Type", asset.contentType),
+                            ("Cache-Control", "max-age=31536000"), // Cache one year
+                        ];
+                        status_code = 200;
+                        streaming_strategy = null;
+                    };
+                    case null return http_404(null);
+                };
+            };
+        };
+        http_404(null);
     };
 
     private func http_404(msg : ?Text) : Assets.HttpResponse {
