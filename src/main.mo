@@ -294,17 +294,46 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     };
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
+    // | @ext:stoic integration                                                |
+    // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
+
+    public shared query func tokens(
+        accountid : Ext.AccountIdentifier
+    ) : async Result.Result<[Ext.TokenIndex], Ext.CommonError> {
+        switch (tokensOfUser.get(accountid)) {
+            case (?ids) #ok(ids);
+            case (_) #err(#Other("No tokens"));
+        }
+    };
+
+    public type NftDetails = {
+        locked: ?Int;
+        seller: Principal;
+        price: Nat64;
+    };
+
+    public shared query func details(
+        tokenid : Ext.TokenIdentifier
+    ) : async Result.Result<(Ext.AccountIdentifier, ?NftDetails), Ext.CommonError> {
+        let { index } = ExtToniq.TokenIdentifier.decode(tokenid);
+        switch (tokenLedger.get(index)) {
+            case (? token) { #ok((token.owner, null)); };
+            case (null)    { #err(#Other("Something went wrong.")); };
+        };
+    };
+
+    // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
     // | Non-standard EXT                                                       |
     // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
 
-    public shared func userToken(user : Ext.User) : async ?(?Token, Ext.TokenIndex) {
+    public shared query func userToken(user : Ext.User) : async ?(?Token, Ext.TokenIndex) {
         switch (tokensOfUser.get(ExtToniq.User.toAID(user))) {
             case (?ids) ?(tokenLedger.get(ids[0]), ids[0]);
             case (_) null;
         }
     };
 
-    public shared func tokenId(index : Ext.TokenIndex) : async Ext.TokenIdentifier {
+    public shared query func tokenId(index : Ext.TokenIndex) : async Ext.TokenIdentifier {
         Ext.TokenIdentifier.encode(Principal.fromActor(this), index);
     };
 
