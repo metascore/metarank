@@ -7,17 +7,18 @@ import HashMap "mo:base/HashMap";
 import Int "mo:base/Int";
 import Iter "mo:base/Iter";
 import Nat "mo:base/Nat";
+import Nat32 "mo:base/Nat32";
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Text "mo:base/Text";
 import Time "mo:base/Time";
 
 import Ext "mo:ext/Ext";
+import ExtToniq "mo:ext-toniq/Core"; // Aviate's TokenIdentifier.decode/encode is broken.
+import AID "mo:ext-toniq/util/AccountIdentifier"; // Aviate's AccountIdentifier.hash is broken.
 import Interface "mo:ext/Interface";
 
 import Assets "mo:assets/AssetStorage";
-
-import Debug "mo:base/Debug";
 
 shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungibleToken = this {
 
@@ -80,10 +81,10 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         stableTokenLedger.vals(), 0, Ext.TokenIndex.equal, Ext.TokenIndex.hash,
     );
 
-    private let tokensOfUser = HashMap.HashMap<
+    private var tokensOfUser = HashMap.HashMap<
         Ext.AccountIdentifier, 
         [Ext.TokenIndex]
-    >(0, Ext.AccountIdentifier.equal, Ext.AccountIdentifier.hash);
+    >(0, AID.equal, AID.hash);
 
     private func putUserToken(
         tokenId : Ext.TokenIndex,
@@ -97,17 +98,6 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     };
 
     for ((tokenId, token) in tokenLedger.entries()) putUserToken(tokenId, token);
-
-    // Checks whether the given token is valid.
-    private func checkToken(tokenId : Ext.TokenIdentifier) : ?Ext.TokenIndex {
-        switch (Ext.TokenIdentifier.decode(tokenId)) {
-            case (#err(e)) { null; };
-            case (#ok(canisterId, index)) {
-                if (not Principal.equal(canisterId, Principal.fromActor(this))) return null;
-                ?index;
-            };
-        };
-    };
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
     // | Upgrades                                                              |
@@ -185,12 +175,26 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         assert (_isAdmin(caller));
         let token = {
             createdAt = Time.now();
-            owner = Ext.User.toAccountIdentifier(request.to);
+            owner = ExtToniq.User.toAID(request.to);
             rankRecord = request.record;
         };
         tokenLedger.put(nextTokenId, token);
         putUserToken(nextTokenId, token);
         nextTokenId += 1;
+    };
+
+    // Destroy the ledger.
+    // @auth: admin
+    public shared({caller}) func purgeLedger () : async () {
+        assert (_isAdmin(caller));
+        nextTokenId := 0;
+        tokenLedger := HashMap.HashMap<Ext.TokenIndex, Token>(
+            0, Ext.TokenIndex.equal, Ext.TokenIndex.hash,
+        );
+        tokensOfUser := HashMap.HashMap<
+            Ext.AccountIdentifier, 
+            [Ext.TokenIndex]
+        >(0, AID.equal, AID.hash);
     };
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
@@ -200,16 +204,13 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     public shared query func balance(
         request : Ext.Core.BalanceRequest,
     ) : async Ext.Core.BalanceResponse {
-        let index = switch (checkToken(request.token)) {
-            case (null) { return #err(#InvalidToken(request.token)); };
-            case (? i)  { i; };
-        };
+        let { index } = ExtToniq.TokenIdentifier.decode(request.token);
 
-        let accountId = Ext.User.toAccountIdentifier(request.user);
+        let accountId = ExtToniq.User.toAID(request.user);
         switch (tokenLedger.get(index)) {
             case (null) { #err(#InvalidToken(request.token)); };
             case (? token) {
-                if (Ext.AccountIdentifier.equal(accountId, token.owner)) return #ok(1);
+                if (AID.equal(accountId, token.owner)) return #ok(1);
                 #ok(0);
             };
         };
@@ -232,22 +233,13 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     public query func metadata(
         tokenId : Ext.TokenIdentifier,
     ) : async Ext.Common.MetadataResponse {
-        switch (checkToken(tokenId)) {
-            case (null) { return #err(#InvalidToken(tokenId)); };
-            case (? _)  {};
-        };
-
-        #ok(#nonfungible({metadata = null}));
+        #ok(#nonfungible({metadata = ?Blob.fromArray([])}));
     };
 
     public query func supply(
         tokenId : Ext.TokenIdentifier,
     ) : async Ext.Common.SupplyResponse {
-        let index = switch (checkToken(tokenId)) {
-            case (null) { return #err(#InvalidToken(tokenId)); };
-            case (? i)  { i; };
-        };
-
+        let { index } = ExtToniq.TokenIdentifier.decode(tokenId);
         switch (tokenLedger.get(index)) {
             case (null) { #ok(0); };
             case (? _)  { #ok(1); };
@@ -261,11 +253,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     public query func bearer(
         tokenId : Ext.TokenIdentifier,
     ) : async Ext.NonFungible.BearerResponse {
-        let index = switch (checkToken(tokenId)) {
-            case (null) { return #err(#InvalidToken(tokenId)); };
-            case (? i)  { i; };
-        };
-
+        let { index } = ExtToniq.TokenIdentifier.decode(tokenId);
         switch (tokenLedger.get(index)) {
             case (? token) { #ok(token.owner); };
             case (null)    { #err(#InvalidToken(tokenId)); };
@@ -298,11 +286,15 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     // | Non-standard EXT                                                       |
     // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
 
-    public shared func userToken(user : Ext.User) : async ?Token {
-        switch (tokensOfUser.get(Ext.User.toAccountIdentifier(user))) {
-            case (?ids) tokenLedger.get(ids[0]);
+    public shared func userToken(user : Ext.User) : async ?(?Token, Ext.TokenIndex) {
+        switch (tokensOfUser.get(ExtToniq.User.toAID(user))) {
+            case (?ids) ?(tokenLedger.get(ids[0]), ids[0]);
             case (_) null;
         }
+    };
+
+    public shared func tokenId(index : Ext.TokenIndex) : async Ext.TokenIdentifier {
+        Ext.TokenIdentifier.encode(Principal.fromActor(this), index);
     };
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
@@ -403,28 +395,27 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         };
 
         // 404
-        return http_404(null);
+        return http_404(?"Path not found.");
     };
 
     private func http_token_preview(request : Assets.HttpRequest) : HttpResponse {
         let tokenId = Iter.toArray(Text.tokens(request.url, #text("tokenid=")))[1];
-        switch (Ext.TokenIdentifier.decode(tokenId)) {
-            case (#err(err)) http_400(?"Invalid token ID.");
-            case (#ok(_, tokenIndex)) {
-                switch (getTokenAsset(tokenIndex)) {
-                    case (#ok(asset)) ({
-                        body = flattenPayload(asset.payload);
-                        headers = [
-                            ("Content-Type", asset.contentType),
-                            ("Cache-Control", "max-age=31536000"), // Cache one year
-                        ];
-                        status_code = 200;
-                        streaming_strategy = null;
-                    });
-                    case (#err(_)) http_404(null);
-                };
-            };
-        }          
+        let { index } = ExtToniq.TokenIdentifier.decode(tokenId);
+        switch (getTokenAsset(index)) {
+            case (#ok(asset)) ({
+                body = flattenPayload(asset.payload);
+                headers = [
+                    ("Content-Type", asset.contentType),
+                    ("Cache-Control", "max-age=31536000"), // Cache one year
+                ];
+                status_code = 200;
+                streaming_strategy = null;
+            });
+            case (#err(err)) switch (err) {
+                case (#token) http_404(?"Token not found.");
+                case (#asset) http_404(?"Asset not found.");
+            }
+        };      
     };
 
     private func http_badge_preview(request : Assets.HttpRequest) : HttpResponse {

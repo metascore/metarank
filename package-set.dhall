@@ -7,6 +7,11 @@ let additions = [
   , version = "v0.1.1"
   , dependencies = ["base", "principal"]
   },
+  { name = "ext-toniq"
+  , repo = "https://github.com/jorgenbuilder/extendable-token"
+  , version = "main"
+  , dependencies = ["base"]
+  },
   { name = "principal"
   , repo = "https://github.com/aviate-labs/principal.mo"
   , version = "v0.2.1"

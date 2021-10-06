@@ -1,4 +1,4 @@
 {
-  dependencies = [ "base", "ext", "assets" ],
+  dependencies = [ "base", "ext", "assets", "ext-toniq" ],
   compiler = None Text
 }
