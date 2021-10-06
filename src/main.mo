@@ -30,6 +30,13 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         payload     : [Blob];
     };
 
+    public type HttpResponse = {
+        body : Blob;  // Quint, why was this changed to [Nat8]?
+        headers : [Assets.HeaderField];
+        streaming_strategy : ?Assets.StreamingStrategy;
+        status_code : Nat16;
+    };
+
     private stable let assets : [var ?Asset] = Array.init<?Asset>(6, null);
     private stable let assetPreviews : [var ?Asset] = Array.init<?Asset>(6, null);
 
@@ -372,17 +379,19 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         assets[record.rank];
     };
 
-    private func flattenPayload (payload : [Blob]) : [Nat8] {
-        Array.foldLeft<Blob, [Nat8]>(payload, [], func (a : [Nat8], b : Blob) {
-            Array.append(a, Blob.toArray(b));
-        })
+    private func flattenPayload (payload : [Blob]) : Blob {
+        Blob.fromArray(
+            Array.foldLeft<Blob, [Nat8]>(payload, [], func (a : [Nat8], b : Blob) {
+                Array.append(a, Blob.toArray(b));
+            })
+        );
     };
 
     // ◤━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◥
     // | HTTP                                                                   |
     // ◣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━◢
 
-    public query func http_request(request : Assets.HttpRequest) : async Assets.HttpResponse {
+    public query func http_request(request : Assets.HttpRequest) : async HttpResponse {
         // Token preview
         if (Text.contains(request.url, #text("tokenid"))) {
             return http_token_preview(request);
@@ -397,7 +406,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         return http_404(null);
     };
 
-    private func http_token_preview(request : Assets.HttpRequest) : Assets.HttpResponse {
+    private func http_token_preview(request : Assets.HttpRequest) : HttpResponse {
         let tokenId = Iter.toArray(Text.tokens(request.url, #text("tokenid=")))[1];
         switch (Ext.TokenIdentifier.decode(tokenId)) {
             case (#err(err)) http_400(?"Invalid token ID.");
@@ -418,7 +427,7 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         }          
     };
 
-    private func http_badge_preview(request : Assets.HttpRequest) : Assets.HttpResponse {
+    private func http_badge_preview(request : Assets.HttpRequest) : HttpResponse {
         let pathParam = Iter.toArray(Text.tokens(request.url, #text("badge_preview=")))[1];
         for (i in Iter.range(0, 5)) {
             if (Int.toText(i) == pathParam) {
@@ -440,14 +449,14 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         http_404(null);
     };
 
-    private func http_404(msg : ?Text) : Assets.HttpResponse {
+    private func http_404(msg : ?Text) : HttpResponse {
         {
-            body = Blob.toArray(Text.encodeUtf8(
+            body = Text.encodeUtf8(
                 switch (msg) {
                     case (?msg) msg;
                     case null "Not found.";
                 }
-            ));
+            );
             headers = [
                 ("Content-Type", "text/plain"),
             ];
@@ -456,14 +465,14 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         };
     };
 
-    private func http_400(msg : ?Text) : Assets.HttpResponse {
+    private func http_400(msg : ?Text) : HttpResponse {
         {
-            body = Blob.toArray(Text.encodeUtf8(
+            body = Text.encodeUtf8(
                 switch (msg) {
                     case (?msg) msg;
                     case null "Bad request.";
                 }
-            ));
+            );
             headers = [
                 ("Content-Type", "text/plain"),
             ];
