@@ -163,7 +163,14 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     ) : async () {
         assert (_isAdmin(caller));
         for (r in Iter.fromArray(requests)) {
-            await mint(r);
+            let token = {
+                createdAt = Time.now();
+                owner = ExtToniq.User.toAID(r.to);
+                rankRecord = r.record;
+            };
+            tokenLedger.put(nextTokenId, token);
+            putUserToken(nextTokenId, token);
+            nextTokenId += 1;
         };
     };
 
@@ -233,7 +240,11 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     public query func metadata(
         tokenId : Ext.TokenIdentifier,
     ) : async Ext.Common.MetadataResponse {
-        #ok(#nonfungible({metadata = ?Blob.fromArray([])}));
+        let { index } = ExtToniq.TokenIdentifier.decode(tokenId);
+        switch (tokenLedger.get(index)) {
+            case (?token) #ok(#nonfungible({metadata = ?Text.encodeUtf8(token.rankRecord.name)}));
+            case null #ok(#nonfungible({metadata = ?Text.encodeUtf8("Metascore Badge")}));
+        };
     };
 
     public query func supply(
