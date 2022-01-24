@@ -75,6 +75,12 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
         metadata: ?Blob;
     };
 
+    public type Listing = {
+        locked : ?Int;
+        seller : Principal;
+        price  : Nat64;
+    };
+
     private stable var nextTokenId : Ext.TokenIndex = 0;
     private stable var stableTokenLedger : [(Ext.TokenIndex, Token)] = [];
     private var tokenLedger = HashMap.fromIter<Ext.TokenIndex, Token>(
@@ -302,6 +308,15 @@ shared ({ caller = owner }) actor class MetaRank() : async Interface.NonFungible
     ) : async Result.Result<[Ext.TokenIndex], Ext.CommonError> {
         switch (tokensOfUser.get(accountid)) {
             case (?ids) #ok(ids);
+            case (_) #err(#Other("No tokens"));
+        }
+    };
+
+    public query ({ caller }) func tokens_ext(
+        accountid : Ext.AccountIdentifier
+    ) : async Result.Result<[(Ext.TokenIndex, ?[Listing], ?[Nat8])], Ext.CommonError> {
+        switch (tokensOfUser.get(accountid)) {
+            case (?ids) #ok(Array.map<Ext.TokenIndex, (Ext.TokenIndex, ?[Listing], ?[Nat8])>(ids, func (id : Ext.TokenIndex) { (id, null, null) }));
             case (_) #err(#Other("No tokens"));
         }
     };
